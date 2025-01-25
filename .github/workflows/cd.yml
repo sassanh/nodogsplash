@@ -1,0 +1,64 @@
+name: Continuous Deployment
+
+on:
+  push:
+    branches:
+      - master
+    tags:
+      - v*
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Debian Packages
+    strategy:
+      matrix:
+        runner: ['amd64', 'arm64']
+    # convert it to amd64 -> ubuntu-latest or arm64 -> ubuntu-24.04-arm
+    runs-on: ubuntu-${{ matrix.runner == 'amd64' && 'latest' || '24.04-arm' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libmicrohttpd-dev build-essential debhelper dh-make fakeroot devscripts
+
+      - name: Build
+        run: |
+          make
+          dpkg-buildpackage -us -uc -b
+          mv ../*.deb .
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: debian-packages-${{ matrix.runner }}
+          path: '*.deb'
+
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    steps:
+      - name: Download amd64 packages
+        uses: actions/download-artifact@v4
+        with:
+          name: debian-packages-amd64
+
+      - name: Download arm64 packages
+        uses: actions/download-artifact@v4
+        with:
+          name: debian-packages-arm64
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            *.deb
+          tag_name: ${{ github.ref }}
+          body: |
+            Release ${{ github.ref }}
